@@ -135,8 +135,111 @@ function normalizePhone(p) {
   if (s.startsWith('0')) return '972' + s.slice(1);
   return s;
 }
-const waLink = p => p ? `https://wa.me/${normalizePhone(p)}` : '#';
 const telLink = p => p ? `tel:${normalizePhone(p)}` : '#';
+
+/* ============== HEBREW TRANSLITERATION ============== */
+// Convert English/Latin name to approximate Hebrew. ~85% accuracy.
+function transliterateToHebrew(name) {
+  if (!name) return '';
+  if (/[\u0590-\u05FF]/.test(name)) return name; // already Hebrew
+  if (!/[a-zA-Z]/.test(name)) return name;
+
+  const digraphs = [
+    ['sch', 'ש'], ['tch', 'צ׳'], ['kh', 'כ'],
+    ['ch', 'צ׳'], ['sh', 'ש'], ['ts', 'צ'], ['tz', 'צ'],
+    ['th', 'ת'], ['ph', 'פ'], ['ck', 'ק'],
+    // vowel digraphs - skip 'h' equivalent
+    ['oo', 'ו'], ['ou', 'ו'], ['ee', 'י'], ['ea', 'י'],
+    ['ai', 'יי'], ['ay', 'יי'], ['ei', 'יי'], ['ey', 'יי'],
+    ['ie', 'י'], ['oa', 'ו'], ['ow', 'או'],
+    ['ya', 'יה'], ['ye', 'יי'], ['yo', 'יו'], ['yu', 'יו'],
+    ['iy', 'י'], ['ae', 'י']
+  ];
+  const single = {
+    a:'ה', b:'ב', c:'ק', d:'ד', e:'', f:'פ', g:'ג', h:'ה',
+    i:'י', j:'ג׳', k:'ק', l:'ל', m:'מ', n:'נ', o:'ו', p:'פ',
+    q:'ק', r:'ר', s:'ס', t:'ט', u:'ו', v:'ו', w:'ו', x:'קס',
+    y:'י', z:'ז'
+  };
+  const sofit = { 'מ':'ם', 'נ':'ן', 'פ':'ף', 'צ':'ץ', 'כ':'ך' };
+
+  return name.split(/\s+/).map(word => {
+    let lower = word.toLowerCase();
+    let out = '';
+    let i = 0;
+    while (i < lower.length) {
+      let matched = false;
+      for (const [pat, heb] of digraphs) {
+        if (lower.substr(i, pat.length) === pat) {
+          out += heb; i += pat.length; matched = true; break;
+        }
+      }
+      if (!matched) {
+        const ch = lower[i];
+        const isFirst = (i === 0);
+        // Vowels at start of word: prepend א
+        if (isFirst && 'aeiou'.includes(ch)) {
+          if (ch === 'a') out += 'א';
+          else if (ch === 'e') out += 'א';
+          else if (ch === 'i') out += 'אי';
+          else if (ch === 'o') out += 'או';
+          else if (ch === 'u') out += 'או';
+        } else if (ch === 'a') {
+          // Middle/end 'a' silent unless single vowel in short word
+          out += (lower.length <= 2) ? 'ה' : '';
+        } else if (single[ch] !== undefined) {
+          out += single[ch];
+        } else {
+          out += ch;
+        }
+        i++;
+      }
+    }
+    // Collapse identical consecutive Hebrew chars
+    out = out.replace(/(.)\1+/g, '$1');
+    // Drop trailing 'ה' (unstressed) but keep א
+    out = out.replace(/ה$/, '');
+    // Apply sofit
+    if (out.length > 0 && sofit[out[out.length-1]]) {
+      out = out.slice(0, -1) + sofit[out[out.length-1]];
+    }
+    return out;
+  }).join(' ');
+}
+
+/* ============== ROLE → MESSAGE PHRASE ============== */
+// Map any role text to the phrase used in the WhatsApp message.
+// Keys are substrings to match (case-insensitive). First match wins.
+const ROLE_PHRASES = [
+  { match: ['מלצר', 'waiter', 'waitress'],   phrase: 'מלצרות' },
+  { match: ['בר', 'ברמן', 'barman', 'bar'],   phrase: 'בר' },
+  { match: ['מטבח', 'kitchen', 'cook', 'chef'], phrase: 'מטבח' },
+  { match: ['מארח', 'מארחת', 'host', 'hostess'], phrase: 'מארחת' }
+];
+
+function rolePhrase(role) {
+  if (!role) return '';
+  const lower = role.toLowerCase();
+  for (const r of ROLE_PHRASES) {
+    if (r.match.some(m => lower.includes(m.toLowerCase()))) return r.phrase;
+  }
+  return ''; // unknown role
+}
+
+/* ============== WHATSAPP MESSAGE BUILDER ============== */
+function buildWhatsAppMessage(lead) {
+  const name = transliterateToHebrew(lead.full_name) || lead.full_name || '';
+  const phrase = rolePhrase(lead.role);
+  const roleClause = phrase ? `בנוגע למשרת ${phrase} ` : '';
+  return `היי ${name} מה שלומך? ראיתי שהשארת פרטים ${roleClause}באומינו סושי.`;
+}
+
+function waLinkWithMessage(lead) {
+  if (!lead.phone) return '#';
+  const phone = normalizePhone(lead.phone);
+  const msg = encodeURIComponent(buildWhatsAppMessage(lead));
+  return `https://wa.me/${phone}?text=${msg}`;
+}
 
 /* ============== SHEETS LOAD (hardcoded column positions) ============== */
 // Column letters for the Umino sheet (Facebook Lead Ads layout)
@@ -362,7 +465,7 @@ function cardHTML(lead) {
         ${roleBadge}${cityBadge}${genderBadge}
       </div>
       <div class="actions">
-        <a class="wa" href="${waLink(lead.phone)}" target="_blank">WhatsApp</a>
+        <a class="wa" href="${waLinkWithMessage(lead)}" target="_blank">WhatsApp</a>
         <a class="call" href="${telLink(lead.phone)}">חיוג</a>
         <button class="hide" data-act="hide">${s.hidden?'בטל הסתרה':'הסתר'}</button>
       </div>
