@@ -148,11 +148,11 @@ function transliterateToHebrew(name) {
     ['sch', 'ש'], ['tch', 'צ׳'], ['kh', 'כ'],
     ['ch', 'צ׳'], ['sh', 'ש'], ['ts', 'צ'], ['tz', 'צ'],
     ['th', 'ת'], ['ph', 'פ'], ['ck', 'ק'],
-    // vowel digraphs - skip 'h' equivalent
     ['oo', 'ו'], ['ou', 'ו'], ['ee', 'י'], ['ea', 'י'],
     ['ai', 'יי'], ['ay', 'יי'], ['ei', 'יי'], ['ey', 'יי'],
     ['ie', 'י'], ['oa', 'ו'], ['ow', 'או'],
-    ['ya', 'יה'], ['ye', 'יי'], ['yo', 'יו'], ['yu', 'יו'],
+    // 'ya' / 'yah' → keep ה (use placeholder ֿ◌ that we restore at end)
+    ['ya', 'יה\u200B'], ['ye', 'יי'], ['yo', 'יו'], ['yu', 'יו'],
     ['iy', 'י'], ['ae', 'י']
   ];
   const single = {
@@ -195,10 +195,12 @@ function transliterateToHebrew(name) {
         i++;
       }
     }
-    // Collapse identical consecutive Hebrew chars
+    // Collapse identical consecutive Hebrew chars (skip protected ה)
     out = out.replace(/(.)\1+/g, '$1');
-    // Drop trailing 'ה' (unstressed) but keep א
-    out = out.replace(/ה$/, '');
+    // Drop trailing 'ה' UNLESS it was protected (followed by zero-width space marker)
+    out = out.replace(/ה(?!\u200B)$/, '');
+    // Remove the zero-width space markers
+    out = out.replace(/\u200B/g, '');
     // Apply sofit
     if (out.length > 0 && sofit[out[out.length-1]]) {
       out = out.slice(0, -1) + sofit[out[out.length-1]];
