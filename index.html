@@ -197,18 +197,33 @@ async function loadSheets() {
     c && c.toLowerCase() === name.toLowerCase()
   );
 
-  const idxKey   = colIdx('lead_key');
-  const idxTime  = colIdx('created_time');
-  const idxName  = colIdx('full_name');
-  const idxPhone = colIdx('phone_number');
-  const idxRole  = colNames.findIndex(c => c && c.includes('תפקיד'));
-  const idxGender= colIdx('gender');
-  const idxCity  = colIdx('city');
+  let idxKey   = colIdx('lead_key');
+  let idxTime  = colIdx('created_time');
+  let idxName  = colIdx('full_name');
+  let idxPhone = colIdx('phone_number');
+  let idxRole  = colNames.findIndex(c => c && c.includes('תפקיד'));
+  let idxGender= colIdx('gender');
+  let idxCity  = colIdx('city');
+
+  // FALLBACK: detect UUID/ISO timestamp by content pattern if name lookup failed
+  if (idxKey === -1 || idxTime === -1) {
+    const sampleRowIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
+    const sample = ((rows[sampleRowIdx] && rows[sampleRowIdx].c) || [])
+      .map(c => (c && c.v != null) ? String(c.v).trim() : '');
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isoRe  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+    for (let j = 0; j < sample.length; j++) {
+      if (idxKey  === -1 && uuidRe.test(sample[j])) idxKey  = j;
+      if (idxTime === -1 && isoRe.test(sample[j]))  idxTime = j;
+    }
+    window.__umino_debug.fallbackUsed = true;
+    window.__umino_debug.sampleRow = sample;
+  }
 
   window.__umino_debug.indices = { idxKey, idxTime, idxName, idxPhone, idxRole, idxGender, idxCity };
 
   if (idxKey === -1) {
-    throw new Error('עמודת lead_key לא נמצאה. בדוק שה-Apps Script רץ והוסיף את העמודה.');
+    throw new Error('עמודת lead_key לא נמצאה. הקש __umino_debug ב-Console לאבחון.');
   }
 
   const startIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
