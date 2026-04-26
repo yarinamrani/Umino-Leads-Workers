@@ -282,7 +282,8 @@ function setSaving(el, txt, cls='') {
 /* ============== RENDER ============== */
 function bucket(lead) {
   const s = STATUSES[lead.lead_key];
-  if (!s || s.hidden) return 'hidden';
+  if (!s) return 'new';                  // no record yet → new lead
+  if (s.hidden) return 'hidden';
   return s.status || 'new';
 }
 
