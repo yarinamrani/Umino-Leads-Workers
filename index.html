@@ -138,9 +138,9 @@ function normalizePhone(p) {
 const waLink = p => p ? `https://wa.me/${normalizePhone(p)}` : '#';
 const telLink = p => p ? `tel:${normalizePhone(p)}` : '#';
 
-/* ============== SHEETS LOAD ============== */
+/* ============== SHEETS LOAD (robust) ============== */
 async function loadSheets() {
-  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json`;
+  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&t=${Date.now()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Sheets fetch failed: ${res.status}`);
   const text = await res.text();
@@ -148,43 +148,57 @@ async function loadSheets() {
   if (!m) throw new Error('Could not parse gviz response');
   const json = JSON.parse(m[1]);
 
-  const cols = json.table.cols.map(c => (c.label || '').trim());
+  const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
 
-  // Find header row in data if cols are blank
-  // (Facebook Lead Ads sometimes pushes headers into row 8+)
+  // Build column name array from BOTH cols[].label AND any row that contains
+  // recognizable header tokens. Whichever fills the slot first wins.
+  const headerTokens = ['lead_key','created_time','full_name','phone_number','gender','city','lead_status'];
+  const colNames = colsMeta.map(c => (c.label || '').trim());
+
+  // Scan ALL rows looking for headers. Some sheets push headers down to row 8+.
   let headerRowIdx = -1;
-  if (cols.every(c => !c)) {
-    for (let i = 0; i < Math.min(rows.length, 15); i++) {
-      const vals = (rows[i].c || []).map(c => c && c.v ? String(c.v) : '');
-      if (vals.includes('full_name') || vals.includes('phone_number')) {
-        headerRowIdx = i;
-        for (let j = 0; j < vals.length; j++) cols[j] = vals[j];
-        break;
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const vals = (rows[i].c || []).map(c => (c && (c.v != null) ? String(c.v) : ''));
+    const matches = vals.filter(v => headerTokens.includes(v.trim())).length;
+    if (matches >= 2) {
+      headerRowIdx = i;
+      for (let j = 0; j < vals.length; j++) {
+        const v = vals[j].trim();
+        if (v && !colNames[j]) colNames[j] = v;
       }
+      break;
     }
   }
 
-  const colIdx = name => {
-    const i = cols.findIndex(c => c === name || c.toLowerCase() === name.toLowerCase());
-    return i;
-  };
+  // DEBUG: expose what we found so we can troubleshoot from console
+  window.__umino_debug = { colNames, headerRowIdx, totalRows: rows.length };
 
-  const idxKey  = colIdx('lead_key');
-  const idxTime = colIdx('created_time');
-  const idxName = colIdx('full_name');
-  const idxPhone= colIdx('phone_number');
-  const idxRole = cols.findIndex(c => c.includes('תפקיד'));
-  const idxGender = colIdx('gender');
-  const idxCity = colIdx('city');
+  const colIdx = name => colNames.findIndex(c =>
+    c && c.toLowerCase() === name.toLowerCase()
+  );
+
+  const idxKey   = colIdx('lead_key');
+  const idxTime  = colIdx('created_time');
+  const idxName  = colIdx('full_name');
+  const idxPhone = colIdx('phone_number');
+  const idxRole  = colNames.findIndex(c => c && c.includes('תפקיד'));
+  const idxGender= colIdx('gender');
+  const idxCity  = colIdx('city');
+
+  if (idxKey === -1) {
+    throw new Error('עמודת lead_key לא נמצאה בקובץ. ודא שה-Apps Script רץ ושהוא הוסיף את העמודה.');
+  }
 
   const startIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
   const out = [];
   for (let i = startIdx; i < rows.length; i++) {
-    const r = rows[i].c || [];
-    const get = idx => idx >= 0 && r[idx] ? (r[idx].v || '') : '';
+    const r = (rows[i] && rows[i].c) || [];
+    const get = idx => (idx >= 0 && r[idx] && (r[idx].v != null)) ? r[idx].v : '';
     const lead_key = String(get(idxKey) || '').trim();
-    if (!lead_key) continue; // skip rows not yet enriched by Apps Script
+    if (!lead_key) continue;
+    // Skip rows where lead_key is literally the header word (in case header found again)
+    if (lead_key === 'lead_key') continue;
 
     out.push({
       lead_key,
@@ -196,6 +210,8 @@ async function loadSheets() {
       city: String(get(idxCity) || '').trim()
     });
   }
+
+  window.__umino_debug.leadsFound = out.length;
   return out;
 }
 
