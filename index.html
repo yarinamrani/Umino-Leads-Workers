@@ -191,6 +191,32 @@ async function loadSheets() {
     }
   }
 
+  // STEP 2b: CROSS-ROW INFERENCE
+  // The Apps Script may have written 'lead_key' / 'created_time' to a row that
+  // isn't the main header row. Or values in rows might match patterns. Find them.
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const isoRe  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+  for (let j = 0; j < numCols; j++) {
+    if (colNames[j]) continue; // already named, skip
+    // Scan all rows for hints
+    for (let i = 0; i < rows.length; i++) {
+      const v = cellText(rows[i], j);
+      if (!v) continue;
+      // If any cell in this column equals 'lead_key' or 'created_time' (header label
+      // that ended up in a row), assign it
+      if (v === 'lead_key' || v === 'created_time' ||
+          v === 'full_name' || v === 'phone_number') {
+        colNames[j] = v;
+        break;
+      }
+      // If any cell looks like UUID → this is the lead_key column
+      if (uuidRe.test(v)) { colNames[j] = 'lead_key'; break; }
+      // If any cell looks like ISO timestamp → created_time
+      if (isoRe.test(v)) { colNames[j] = 'created_time'; break; }
+    }
+  }
+
   const colIdx = name => colNames.findIndex(c => c.toLowerCase() === name.toLowerCase());
   const idxKey   = colIdx('lead_key');
   const idxTime  = colIdx('created_time');
