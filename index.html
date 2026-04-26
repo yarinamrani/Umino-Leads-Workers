@@ -138,7 +138,7 @@ function normalizePhone(p) {
 const waLink = p => p ? `https://wa.me/${normalizePhone(p)}` : '#';
 const telLink = p => p ? `tel:${normalizePhone(p)}` : '#';
 
-/* ============== SHEETS LOAD (robust) ============== */
+/* ============== SHEETS LOAD (bulletproof) ============== */
 async function loadSheets() {
   const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&t=${Date.now()}`;
   const res = await fetch(url);
@@ -151,28 +151,47 @@ async function loadSheets() {
   const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
 
-  // Build column name array from BOTH cols[].label AND any row that contains
-  // recognizable header tokens. Whichever fills the slot first wins.
-  const headerTokens = ['lead_key','created_time','full_name','phone_number','gender','city','lead_status'];
-  const colNames = colsMeta.map(c => (c.label || '').trim());
+  // Tokens we KNOW should be in the header row
+  const knownTokens = ['lead_key','created_time','full_name','phone_number','gender','city','lead_status'];
 
-  // Scan ALL rows looking for headers. Some sheets push headers down to row 8+.
+  // Build initial column names from cols metadata (might be empty/partial)
+  const colNames = colsMeta.map(c => (c && c.label ? String(c.label).trim() : ''));
+
+  // ALWAYS scan rows for headers, even if colsMeta has labels.
+  // We trust the in-row headers MORE than cols metadata, because Facebook Lead Ads
+  // and similar tools often put real headers in row 1 and leave cols metadata blank or wrong.
   let headerRowIdx = -1;
+  let bestMatchCount = 0;
   for (let i = 0; i < Math.min(rows.length, 30); i++) {
-    const vals = (rows[i].c || []).map(c => (c && (c.v != null) ? String(c.v) : ''));
-    const matches = vals.filter(v => headerTokens.includes(v.trim())).length;
-    if (matches >= 2) {
+    const vals = ((rows[i] && rows[i].c) || []).map(c => (c && c.v != null) ? String(c.v).trim() : '');
+    const matchCount = vals.filter(v => knownTokens.includes(v)).length;
+    if (matchCount > bestMatchCount) {
+      bestMatchCount = matchCount;
       headerRowIdx = i;
-      for (let j = 0; j < vals.length; j++) {
-        const v = vals[j].trim();
-        if (v && !colNames[j]) colNames[j] = v;
-      }
-      break;
     }
   }
 
-  // DEBUG: expose what we found so we can troubleshoot from console
-  window.__umino_debug = { colNames, headerRowIdx, totalRows: rows.length };
+  // If we found a header row in data, OVERWRITE colNames with what's in that row
+  // (in-row headers are authoritative)
+  if (headerRowIdx >= 0 && bestMatchCount >= 2) {
+    const vals = ((rows[headerRowIdx] && rows[headerRowIdx].c) || [])
+      .map(c => (c && c.v != null) ? String(c.v).trim() : '');
+    // Extend colNames if needed
+    while (colNames.length < vals.length) colNames.push('');
+    for (let j = 0; j < vals.length; j++) {
+      if (vals[j]) colNames[j] = vals[j];  // in-row header wins
+    }
+  }
+
+  // Expose for debugging
+  window.__umino_debug = {
+    colsMetaLabels: colsMeta.map(c => c && c.label || ''),
+    finalColNames: colNames.slice(),
+    headerRowIdx,
+    headerMatchCount: bestMatchCount,
+    totalRows: rows.length,
+    firstDataRowSample: null
+  };
 
   const colIdx = name => colNames.findIndex(c =>
     c && c.toLowerCase() === name.toLowerCase()
@@ -186,21 +205,21 @@ async function loadSheets() {
   const idxGender= colIdx('gender');
   const idxCity  = colIdx('city');
 
+  window.__umino_debug.indices = { idxKey, idxTime, idxName, idxPhone, idxRole, idxGender, idxCity };
+
   if (idxKey === -1) {
-    throw new Error('עמודת lead_key לא נמצאה בקובץ. ודא שה-Apps Script רץ ושהוא הוסיף את העמודה.');
+    throw new Error('עמודת lead_key לא נמצאה. בדוק שה-Apps Script רץ והוסיף את העמודה.');
   }
 
   const startIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
   const out = [];
   for (let i = startIdx; i < rows.length; i++) {
     const r = (rows[i] && rows[i].c) || [];
-    const get = idx => (idx >= 0 && r[idx] && (r[idx].v != null)) ? r[idx].v : '';
+    const get = idx => (idx >= 0 && r[idx] && r[idx].v != null) ? r[idx].v : '';
     const lead_key = String(get(idxKey) || '').trim();
-    if (!lead_key) continue;
-    // Skip rows where lead_key is literally the header word (in case header found again)
-    if (lead_key === 'lead_key') continue;
+    if (!lead_key || lead_key === 'lead_key') continue;
 
-    out.push({
+    const lead = {
       lead_key,
       created_time: String(get(idxTime) || ''),
       full_name: String(get(idxName) || '').trim(),
@@ -208,7 +227,9 @@ async function loadSheets() {
       role: String(get(idxRole) || '').trim(),
       gender: String(get(idxGender) || '').trim(),
       city: String(get(idxCity) || '').trim()
-    });
+    };
+    if (out.length === 0) window.__umino_debug.firstDataRowSample = lead;
+    out.push(lead);
   }
 
   window.__umino_debug.leadsFound = out.length;
