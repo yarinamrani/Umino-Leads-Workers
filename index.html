@@ -1,0 +1,428 @@
+<!doctype html>
+
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>אומינו — לידים</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171b22; --panel2:#1f242d; --line:#2a313c;
+    --text:#e7ecf3; --muted:#8b95a4; --accent:#4f7cff;
+    --new:#3ea372; --sched:#d39a2e; --prog:#4f7cff; --hide:#7a8294;
+    --bad:#d05757;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,system-ui,"Segoe UI","Heebo",sans-serif;}
+  header{padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.2px}
+  header .badge{font-size:11px;background:#2a3042;color:#9ab0ff;
+    padding:3px 8px;border-radius:999px}
+  header .right{margin-inline-start:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  select,button,input{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;font-size:13px}
+  button{cursor:pointer}
+  button:hover{border-color:#3a4252}
+  .stat{font-size:12px;color:var(--muted)}
+  main{padding:14px 18px;display:flex;flex-direction:column;gap:18px}
+  .section{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .sec-head{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:10px;font-weight:600}
+  .sec-head .count{background:var(--panel2);padding:2px 8px;border-radius:999px;font-size:12px;color:var(--muted);font-weight:500}
+  .sec-head .dot{width:8px;height:8px;border-radius:50%}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+    gap:10px;padding:12px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+  .card .name{font-weight:600;font-size:15px}
+  .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#262d39;color:var(--muted)}
+  .pill.role{background:#2c3a5a;color:#a8baf5}
+  .pill.time{background:#23282f}
+  .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+  .actions a, .actions button{font-size:12px;padding:6px 10px;border-radius:8px;text-decoration:none;
+    border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
+  .actions a.wa{background:#1f3d2e;border-color:#28543f;color:#7ddca7}
+  .actions a.call{background:#1d2c44;border-color:#2a4368;color:#9bb6ec}
+  .actions button.hide{background:#2c2222;border-color:#553030;color:#e3a3a3}
+  .controls{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .controls select{font-size:12px;padding:6px 8px}
+  .empty{padding:18px 14px;color:var(--muted);font-size:13px;text-align:center}
+  .err{background:#3a1f1f;border:1px solid #6c2929;color:#ffb3b3;padding:10px 14px;border-radius:8px;font-size:13px;margin:14px 18px}
+  .interview-row{display:flex;gap:6px;align-items:center}
+  .interview-row input{padding:6px 8px;font-size:12px;flex:1;min-width:0}
+  .saving{font-size:11px;color:var(--muted)}
+  .saving.ok{color:#7ddca7}
+  .saving.bad{color:#e3a3a3}
+  .loading{padding:24px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>אומינו — לידים</h1>
+  <span class="badge">UMINO</span>
+  <div class="right">
+    <span class="stat" id="stat">טוען…</span>
+    <select id="roleFilter" title="תפקיד">
+      <option value="">כל התפקידים</option>
+    </select>
+    <button id="refreshBtn">רענן</button>
+  </div>
+</header>
+
+<div id="errBox"></div>
+<main id="app"><div class="loading">טוען לידים…</div></main>
+
+<script>
+/* ============== CONFIG — UMINO ONLY ============== */
+const CFG = {
+  business: 'umino',
+  sheetId: '1NCl4qxe8gYKXA08cNxHoCyWvHyWXOUMUbffTUsFZVdo',
+  supabase: {
+    url: 'https://vzeowbriddhvhpishmhn.supabase.co',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6ZW93YnJpZGRodmhwaXNobWhuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MTAyNDUsImV4cCI6MjA4ODM4NjI0NX0.PWvjFj41l0wB9awroZdDsMhCJ0yJXdrf1-k-45n0Rwk',
+    table: 'lead_statuses_umino'  // SEPARATE FROM PASEO
+  },
+  handlers: ['גיל', 'בר'],
+  statuses: [
+    { v:'new',           label:'חדש' },
+    { v:'scheduled',     label:'נקבע ראיון' },
+    { v:'in_progress',   label:'בתהליך' },
+    { v:'not_relevant',  label:'לא רלוונטי' }
+  ],
+  subStatuses: {
+    new:          [{v:'',label:'—'}, {v:'message_sent',label:'נשלחה הודעה'}, {v:'no_answer',label:'אין מענה'}],
+    scheduled:    [{v:'',label:'—'}, {v:'confirmed',label:'אושר'}, {v:'cancelled',label:'בוטל'}],
+    in_progress:  [{v:'',label:'—'}, {v:'message_sent',label:'נשלחה הודעה'}, {v:'no_answer',label:'אין מענה'}, {v:'follow_up',label:'מעקב'}],
+    not_relevant: [{v:'',label:'—'}]
+  }
+};
+
+/* ============== STATE ============== */
+let LEADS = [];        // raw merged leads
+let STATUSES = {};     // lead_key -> supabase row
+let ROLE_FILTER = '';
+
+/* ============== HELPERS ============== */
+const $ = sel => document.querySelector(sel);
+const showErr = msg => {
+  const box = $('#errBox');
+  box.innerHTML = `<div class="err">⚠ ${msg}</div>`;
+};
+const clearErr = () => { $('#errBox').innerHTML = ''; };
+
+function relativeHe(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const sec = Math.floor((Date.now() - d.getTime())/1000);
+  if (sec < 60) return 'הרגע';
+  const min = Math.floor(sec/60);
+  if (min < 60) return `לפני ${min} דק׳`;
+  const hr = Math.floor(min/60);
+  if (hr < 24) return `לפני ${hr} שע׳`;
+  const day = Math.floor(hr/24);
+  if (day < 7) return `לפני ${day} ימים`;
+  return d.toLocaleDateString('he-IL');
+}
+
+function normalizePhone(p) {
+  if (!p) return '';
+  const s = String(p).replace(/[^\d+]/g,'');
+  if (s.startsWith('+')) return s.slice(1);
+  if (s.startsWith('00')) return s.slice(2);
+  if (s.startsWith('0')) return '972' + s.slice(1);
+  return s;
+}
+const waLink = p => p ? `https://wa.me/${normalizePhone(p)}` : '#';
+const telLink = p => p ? `tel:${normalizePhone(p)}` : '#';
+
+/* ============== SHEETS LOAD ============== */
+async function loadSheets() {
+  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Sheets fetch failed: ${res.status}`);
+  const text = await res.text();
+  const m = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/);
+  if (!m) throw new Error('Could not parse gviz response');
+  const json = JSON.parse(m[1]);
+
+  const cols = json.table.cols.map(c => (c.label || '').trim());
+  const rows = json.table.rows || [];
+
+  // Find header row in data if cols are blank
+  // (Facebook Lead Ads sometimes pushes headers into row 8+)
+  let headerRowIdx = -1;
+  if (cols.every(c => !c)) {
+    for (let i = 0; i < Math.min(rows.length, 15); i++) {
+      const vals = (rows[i].c || []).map(c => c && c.v ? String(c.v) : '');
+      if (vals.includes('full_name') || vals.includes('phone_number')) {
+        headerRowIdx = i;
+        for (let j = 0; j < vals.length; j++) cols[j] = vals[j];
+        break;
+      }
+    }
+  }
+
+  const colIdx = name => {
+    const i = cols.findIndex(c => c === name || c.toLowerCase() === name.toLowerCase());
+    return i;
+  };
+
+  const idxKey  = colIdx('lead_key');
+  const idxTime = colIdx('created_time');
+  const idxName = colIdx('full_name');
+  const idxPhone= colIdx('phone_number');
+  const idxRole = cols.findIndex(c => c.includes('תפקיד'));
+  const idxGender = colIdx('gender');
+  const idxCity = colIdx('city');
+
+  const startIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
+  const out = [];
+  for (let i = startIdx; i < rows.length; i++) {
+    const r = rows[i].c || [];
+    const get = idx => idx >= 0 && r[idx] ? (r[idx].v || '') : '';
+    const lead_key = String(get(idxKey) || '').trim();
+    if (!lead_key) continue; // skip rows not yet enriched by Apps Script
+
+    out.push({
+      lead_key,
+      created_time: String(get(idxTime) || ''),
+      full_name: String(get(idxName) || '').trim(),
+      phone: String(get(idxPhone) || '').trim(),
+      role: String(get(idxRole) || '').trim(),
+      gender: String(get(idxGender) || '').trim(),
+      city: String(get(idxCity) || '').trim()
+    });
+  }
+  return out;
+}
+
+/* ============== SUPABASE ============== */
+function sbHeaders() {
+  return {
+    'apikey': CFG.supabase.anonKey,
+    'Authorization': `Bearer ${CFG.supabase.anonKey}`,
+    'Content-Type': 'application/json'
+  };
+}
+
+async function loadStatuses() {
+  const url = `${CFG.supabase.url}/rest/v1/${CFG.supabase.table}?select=*`;
+  const res = await fetch(url, { headers: sbHeaders() });
+  if (!res.ok) throw new Error(`Supabase load failed: ${res.status}`);
+  const rows = await res.json();
+  const map = {};
+  rows.forEach(r => map[r.lead_key] = r);
+  return map;
+}
+
+/**
+ * SAFE UPSERT: fetches existing row first, merges, then sends FULL object.
+ * This avoids the partial-object reset bug seen in Paseo.
+ */
+async function saveStatus(lead_key, patch, statusEl) {
+  setSaving(statusEl, '…שומר');
+  try {
+    // 1. Fetch existing
+    const getUrl = `${CFG.supabase.url}/rest/v1/${CFG.supabase.table}?lead_key=eq.${encodeURIComponent(lead_key)}&select=*`;
+    const getRes = await fetch(getUrl, { headers: sbHeaders() });
+    if (!getRes.ok) throw new Error(`fetch existing: ${getRes.status}`);
+    const existing = (await getRes.json())[0] || { lead_key };
+
+    // 2. Merge
+    const merged = { ...existing, ...patch, lead_key, updated_at: new Date().toISOString() };
+    delete merged.created_at; // let DB keep its own
+
+    // 3. Upsert with FULL merged object
+    const url = `${CFG.supabase.url}/rest/v1/${CFG.supabase.table}?on_conflict=lead_key`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { ...sbHeaders(), 'Prefer': 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify(merged)
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`save: ${res.status} ${txt}`);
+    }
+    const saved = (await res.json())[0];
+    STATUSES[lead_key] = saved;
+    setSaving(statusEl, 'נשמר ✓', 'ok');
+    setTimeout(() => setSaving(statusEl, ''), 1500);
+    render();
+  } catch (e) {
+    console.error(e);
+    setSaving(statusEl, 'שגיאה', 'bad');
+  }
+}
+
+function setSaving(el, txt, cls='') {
+  if (!el) return;
+  el.textContent = txt;
+  el.className = 'saving ' + cls;
+}
+
+/* ============== RENDER ============== */
+function bucket(lead) {
+  const s = STATUSES[lead.lead_key];
+  if (!s || s.hidden) return 'hidden';
+  return s.status || 'new';
+}
+
+function render() {
+  // Role filter dropdown population
+  const roles = [...new Set(LEADS.map(l => l.role).filter(Boolean))].sort();
+  const sel = $('#roleFilter');
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">כל התפקידים</option>` +
+    roles.map(r => `<option value="${r}">${r}</option>`).join('');
+  sel.value = cur || ROLE_FILTER || '';
+
+  // Filter
+  const filtered = LEADS.filter(l => !ROLE_FILTER || l.role === ROLE_FILTER);
+
+  // Bucket
+  const buckets = { new:[], scheduled:[], in_progress:[], not_relevant:[], hidden:[] };
+  filtered.forEach(l => {
+    const b = bucket(l);
+    if (buckets[b]) buckets[b].push(l);
+    else buckets.new.push(l);
+  });
+
+  // Sort each bucket by created_time desc
+  Object.keys(buckets).forEach(k => {
+    buckets[k].sort((a,b) => (b.created_time||'').localeCompare(a.created_time||''));
+  });
+
+  $('#stat').textContent =
+    `סה״כ ${filtered.length} • חדשים ${buckets.new.length} • ראיון ${buckets.scheduled.length} • בתהליך ${buckets.in_progress.length}`;
+
+  const sections = [
+    { key:'new',          title:'חדשים',         color:'var(--new)' },
+    { key:'scheduled',    title:'נקבע ראיון',    color:'var(--sched)' },
+    { key:'in_progress',  title:'בתהליך',        color:'var(--prog)' },
+    { key:'not_relevant', title:'לא רלוונטי',    color:'var(--bad)' },
+    { key:'hidden',       title:'מוסתרים',       color:'var(--hide)' }
+  ];
+
+  $('#app').innerHTML = sections.map(sec => `
+    <section class="section">
+      <div class="sec-head">
+        <span class="dot" style="background:${sec.color}"></span>
+        ${sec.title}
+        <span class="count">${buckets[sec.key].length}</span>
+      </div>
+      ${buckets[sec.key].length === 0
+        ? `<div class="empty">אין לידים</div>`
+        : `<div class="grid">${buckets[sec.key].map(cardHTML).join('')}</div>`}
+    </section>
+  `).join('');
+
+  // Wire up controls
+  filtered.forEach(l => wireCard(l));
+}
+
+function cardHTML(lead) {
+  const s = STATUSES[lead.lead_key] || {};
+  const subOpts = (CFG.subStatuses[s.status] || CFG.subStatuses.new)
+    .map(x => `<option value="${x.v}" ${s.sub_status===x.v?'selected':''}>${x.label}</option>`).join('');
+  const statusOpts = CFG.statuses
+    .map(x => `<option value="${x.v}" ${(s.status||'new')===x.v?'selected':''}>${x.label}</option>`).join('');
+  const handlerOpts = ['<option value="">— מטפל —</option>']
+    .concat(CFG.handlers.map(h => `<option value="${h}" ${s.handled_by===h?'selected':''}>${h}</option>`)).join('');
+
+  const roleBadge = lead.role ? `<span class="pill role">${escapeHtml(lead.role)}</span>` : '';
+  const cityBadge = lead.city ? `<span class="pill">${escapeHtml(lead.city)}</span>` : '';
+  const genderBadge = lead.gender ? `<span class="pill">${escapeHtml(lead.gender)}</span>` : '';
+
+  const showInterview = (s.status === 'scheduled');
+  const interviewBlock = showInterview ? `
+    <div class="interview-row">
+      <input type="date" data-k="interview_date" value="${s.interview_date||''}">
+      <input type="time" data-k="interview_time" value="${s.interview_time||''}">
+    </div>` : '';
+
+  return `
+    <div class="card" data-key="${lead.lead_key}">
+      <div class="name">${escapeHtml(lead.full_name) || '—'}</div>
+      <div class="row">
+        <span class="pill time">${relativeHe(lead.created_time)}</span>
+        ${roleBadge}${cityBadge}${genderBadge}
+      </div>
+      <div class="actions">
+        <a class="wa" href="${waLink(lead.phone)}" target="_blank">WhatsApp</a>
+        <a class="call" href="${telLink(lead.phone)}">חיוג</a>
+        <button class="hide" data-act="hide">${s.hidden?'בטל הסתרה':'הסתר'}</button>
+      </div>
+      <div class="controls">
+        <select data-k="handled_by">${handlerOpts}</select>
+        <select data-k="status">${statusOpts}</select>
+        <select data-k="sub_status">${subOpts}</select>
+        <span class="saving" data-saving></span>
+      </div>
+      ${interviewBlock}
+    </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function wireCard(lead) {
+  const card = document.querySelector(`.card[data-key="${CSS.escape(lead.lead_key)}"]`);
+  if (!card) return;
+  const sav = card.querySelector('[data-saving]');
+
+  card.querySelectorAll('select[data-k]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const patch = { [sel.dataset.k]: sel.value || null };
+      // If status changes, clear sub_status to avoid invalid combos
+      if (sel.dataset.k === 'status') patch.sub_status = null;
+      saveStatus(lead.lead_key, patch, sav);
+    });
+  });
+
+  card.querySelectorAll('input[data-k]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      saveStatus(lead.lead_key, { [inp.dataset.k]: inp.value || null }, sav);
+    });
+  });
+
+  const hideBtn = card.querySelector('button.hide');
+  if (hideBtn) {
+    hideBtn.addEventListener('click', () => {
+      const cur = STATUSES[lead.lead_key]?.hidden;
+      saveStatus(lead.lead_key, { hidden: !cur }, sav);
+    });
+  }
+}
+
+/* ============== BOOT ============== */
+async function boot() {
+  clearErr();
+  try {
+    const [leads, statuses] = await Promise.all([loadSheets(), loadStatuses()]);
+    LEADS = leads;
+    STATUSES = statuses;
+    render();
+  } catch (e) {
+    console.error(e);
+    showErr(e.message + ' — בדוק שהשיטס public, שה-Apps Script רץ, ושה-Anon Key נכון.');
+    $('#app').innerHTML = '';
+  }
+}
+
+$('#refreshBtn').addEventListener('click', boot);
+$('#roleFilter').addEventListener('change', e => {
+  ROLE_FILTER = e.target.value;
+  render();
+});
+
+boot();
+// Auto-refresh every 60s
+setInterval(boot, 60000);
+</script>
+
+</body>
+</html>
