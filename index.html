@@ -138,7 +138,21 @@ function normalizePhone(p) {
 const waLink = p => p ? `https://wa.me/${normalizePhone(p)}` : '#';
 const telLink = p => p ? `tel:${normalizePhone(p)}` : '#';
 
-/* ============== SHEETS LOAD (data ABOVE headers - FB Lead Ads layout) ============== */
+/* ============== SHEETS LOAD (hardcoded column positions) ============== */
+// Column letters for the Umino sheet (Facebook Lead Ads layout)
+// M=12, N=13, O=14, P=15, Q=16, S=18, T=19, U=20  (0-based indices)
+const COL = {
+  role:        12, // M - לאיזה תפקיד
+  full_name:   13, // N
+  phone:       14, // O
+  gender:      15, // P
+  city:        16, // Q
+  // R = 17 (skipped/empty)
+  lead_status: 18, // S - we IGNORE this, status comes from Supabase
+  lead_key:    19, // T - added by Apps Script
+  created_time:20  // U - added by Apps Script
+};
+
 async function loadSheets() {
   const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=0&t=${Date.now()}`;
   const res = await fetch(url);
@@ -148,127 +162,42 @@ async function loadSheets() {
   if (!m) throw new Error('Could not parse gviz response');
   const json = JSON.parse(m[1]);
 
-  const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
-  const numCols = Math.max(colsMeta.length, ...rows.map(r => (r.c || []).length));
 
-  // Helper: get cell text from a row
   const cellText = (row, j) => {
     const c = row && row.c && row.c[j];
     return (c && c.v != null) ? String(c.v).trim() : '';
   };
 
-  // STEP 1: Find the header row by scanning ALL rows for known tokens
-  const knownTokens = ['full_name','phone_number','gender','city','lead_status','lead_key','created_time'];
-  let headerRowIdx = -1;
-  let bestCount = 0;
-  for (let i = 0; i < rows.length; i++) {
-    let count = 0;
-    for (let j = 0; j < numCols; j++) {
-      if (knownTokens.includes(cellText(rows[i], j))) count++;
-    }
-    if (count > bestCount) { bestCount = count; headerRowIdx = i; }
-  }
-
-  // Also check the cols metadata as a candidate "header row" (when gviz auto-promotes row 1)
-  const metaCount = colsMeta.filter(c => knownTokens.includes((c.label || '').trim())).length;
-  let headersInMeta = false;
-  if (metaCount > bestCount) {
-    bestCount = metaCount;
-    headersInMeta = true;
-    headerRowIdx = -1;
-  }
-
-  // STEP 2: Build colNames map (column index → header name)
-  const colNames = new Array(numCols).fill('');
-  if (headersInMeta) {
-    for (let j = 0; j < colsMeta.length; j++) {
-      colNames[j] = (colsMeta[j].label || '').trim();
-    }
-  } else if (headerRowIdx >= 0) {
-    for (let j = 0; j < numCols; j++) {
-      colNames[j] = cellText(rows[headerRowIdx], j);
-    }
-  }
-
-  // STEP 2b: CROSS-ROW INFERENCE
-  // The Apps Script may have written 'lead_key' / 'created_time' to a row that
-  // isn't the main header row. Or values in rows might match patterns. Find them.
-  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const isoRe  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
-
-  for (let j = 0; j < numCols; j++) {
-    if (colNames[j]) continue; // already named, skip
-    // Scan all rows for hints
-    for (let i = 0; i < rows.length; i++) {
-      const v = cellText(rows[i], j);
-      if (!v) continue;
-      // If any cell in this column equals 'lead_key' or 'created_time' (header label
-      // that ended up in a row), assign it
-      if (v === 'lead_key' || v === 'created_time' ||
-          v === 'full_name' || v === 'phone_number') {
-        colNames[j] = v;
-        break;
-      }
-      // If any cell looks like UUID → this is the lead_key column
-      if (uuidRe.test(v)) { colNames[j] = 'lead_key'; break; }
-      // If any cell looks like ISO timestamp → created_time
-      if (isoRe.test(v)) { colNames[j] = 'created_time'; break; }
-    }
-  }
-
-  const colIdx = name => colNames.findIndex(c => c.toLowerCase() === name.toLowerCase());
-  const idxKey   = colIdx('lead_key');
-  const idxTime  = colIdx('created_time');
-  const idxName  = colIdx('full_name');
-  const idxPhone = colIdx('phone_number');
-  const idxRole  = colNames.findIndex(c => c && c.includes('תפקיד'));
-  const idxGender= colIdx('gender');
-  const idxCity  = colIdx('city');
+  // Tokens that mark a HEADER row (row to skip)
+  const headerTokens = ['full_name','phone_number','gender','city','lead_status'];
 
   window.__umino_debug = {
-    headersInMeta,
-    headerRowIdx,
-    headerMatchCount: bestCount,
     totalRows: rows.length,
-    numCols,
-    colNames: colNames.slice(),
-    indices: { idxKey, idxTime, idxName, idxPhone, idxRole, idxGender, idxCity }
+    sampleFirstRow: rows[0] ? (rows[0].c || []).map((_, j) => cellText(rows[0], j)) : null,
+    sampleSecondRow: rows[1] ? (rows[1].c || []).map((_, j) => cellText(rows[1], j)) : null
   };
 
-  if (idxKey === -1) {
-    throw new Error('עמודת lead_key לא נמצאה. ודא שה-Apps Script רץ.');
-  }
-
-  // STEP 3: Determine which rows are DATA rows.
-  // If headers are in meta → all rows are data.
-  // If headers are in a row → data rows are those ABOVE headerRowIdx (Facebook layout).
-  //   We also include rows BELOW (in case some legacy rows exist there) but it's optional.
-  const dataRowIndices = [];
-  if (headersInMeta) {
-    for (let i = 0; i < rows.length; i++) dataRowIndices.push(i);
-  } else {
-    // ABOVE headers — Facebook pushes new leads here
-    for (let i = 0; i < headerRowIdx; i++) dataRowIndices.push(i);
-    // BELOW headers — handle legacy rows or non-Facebook entries
-    for (let i = headerRowIdx + 1; i < rows.length; i++) dataRowIndices.push(i);
-  }
-
   const out = [];
-  for (const i of dataRowIndices) {
+  for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    const get = idx => idx >= 0 ? cellText(row, idx) : '';
-    const lead_key = get(idxKey);
-    if (!lead_key) continue; // not enriched yet by Apps Script
+
+    // Detect & skip header rows: row that contains 2+ known header tokens
+    const allCells = (row.c || []).map((_, j) => cellText(row, j));
+    const headerHits = allCells.filter(v => headerTokens.includes(v)).length;
+    if (headerHits >= 2) continue;
+
+    const lead_key = cellText(row, COL.lead_key);
+    if (!lead_key) continue;
 
     out.push({
       lead_key,
-      created_time: get(idxTime),
-      full_name: get(idxName),
-      phone: get(idxPhone),
-      role: get(idxRole),
-      gender: get(idxGender),
-      city: get(idxCity)
+      created_time: cellText(row, COL.created_time),
+      full_name:    cellText(row, COL.full_name),
+      phone:        cellText(row, COL.phone),
+      role:         cellText(row, COL.role),
+      gender:       cellText(row, COL.gender),
+      city:         cellText(row, COL.city)
     });
   }
 
