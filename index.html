@@ -228,7 +228,10 @@ function rolePhrase(role) {
 
 /* ============== WHATSAPP MESSAGE BUILDER ============== */
 function buildWhatsAppMessage(lead) {
-  const name = transliterateToHebrew(lead.full_name) || lead.full_name || '';
+  // Use first name only
+  const fullName = lead.full_name || '';
+  const firstName = fullName.split(/\s+/)[0] || '';
+  const name = transliterateToHebrew(firstName) || firstName;
   const phrase = rolePhrase(lead.role);
   const roleClause = phrase ? `בנוגע למשרת ${phrase} ` : '';
   return `היי ${name} מה שלומך? ראיתי שהשארת פרטים ${roleClause}באומינו סושי.`;
