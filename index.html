@@ -138,9 +138,9 @@ function normalizePhone(p) {
 const waLink = p => p ? `https://wa.me/${normalizePhone(p)}` : '#';
 const telLink = p => p ? `tel:${normalizePhone(p)}` : '#';
 
-/* ============== SHEETS LOAD (bulletproof) ============== */
+/* ============== SHEETS LOAD (data ABOVE headers - FB Lead Ads layout) ============== */
 async function loadSheets() {
-  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&t=${Date.now()}`;
+  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=0&t=${Date.now()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Sheets fetch failed: ${res.status}`);
   const text = await res.text();
@@ -150,104 +150,104 @@ async function loadSheets() {
 
   const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
+  const numCols = Math.max(colsMeta.length, ...rows.map(r => (r.c || []).length));
 
-  // Tokens we KNOW should be in the header row
-  const knownTokens = ['lead_key','created_time','full_name','phone_number','gender','city','lead_status'];
-
-  // Build initial column names from cols metadata (might be empty/partial)
-  const colNames = colsMeta.map(c => (c && c.label ? String(c.label).trim() : ''));
-
-  // ALWAYS scan rows for headers, even if colsMeta has labels.
-  // We trust the in-row headers MORE than cols metadata, because Facebook Lead Ads
-  // and similar tools often put real headers in row 1 and leave cols metadata blank or wrong.
-  let headerRowIdx = -1;
-  let bestMatchCount = 0;
-  for (let i = 0; i < Math.min(rows.length, 30); i++) {
-    const vals = ((rows[i] && rows[i].c) || []).map(c => (c && c.v != null) ? String(c.v).trim() : '');
-    const matchCount = vals.filter(v => knownTokens.includes(v)).length;
-    if (matchCount > bestMatchCount) {
-      bestMatchCount = matchCount;
-      headerRowIdx = i;
-    }
-  }
-
-  // If we found a header row in data, OVERWRITE colNames with what's in that row
-  // (in-row headers are authoritative)
-  if (headerRowIdx >= 0 && bestMatchCount >= 2) {
-    const vals = ((rows[headerRowIdx] && rows[headerRowIdx].c) || [])
-      .map(c => (c && c.v != null) ? String(c.v).trim() : '');
-    // Extend colNames if needed
-    while (colNames.length < vals.length) colNames.push('');
-    for (let j = 0; j < vals.length; j++) {
-      if (vals[j]) colNames[j] = vals[j];  // in-row header wins
-    }
-  }
-
-  // Expose for debugging
-  window.__umino_debug = {
-    colsMetaLabels: colsMeta.map(c => c && c.label || ''),
-    finalColNames: colNames.slice(),
-    headerRowIdx,
-    headerMatchCount: bestMatchCount,
-    totalRows: rows.length,
-    firstDataRowSample: null
+  // Helper: get cell text from a row
+  const cellText = (row, j) => {
+    const c = row && row.c && row.c[j];
+    return (c && c.v != null) ? String(c.v).trim() : '';
   };
 
-  const colIdx = name => colNames.findIndex(c =>
-    c && c.toLowerCase() === name.toLowerCase()
-  );
-
-  let idxKey   = colIdx('lead_key');
-  let idxTime  = colIdx('created_time');
-  let idxName  = colIdx('full_name');
-  let idxPhone = colIdx('phone_number');
-  let idxRole  = colNames.findIndex(c => c && c.includes('תפקיד'));
-  let idxGender= colIdx('gender');
-  let idxCity  = colIdx('city');
-
-  // FALLBACK: detect UUID/ISO timestamp by content pattern if name lookup failed
-  if (idxKey === -1 || idxTime === -1) {
-    const sampleRowIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
-    const sample = ((rows[sampleRowIdx] && rows[sampleRowIdx].c) || [])
-      .map(c => (c && c.v != null) ? String(c.v).trim() : '');
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const isoRe  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
-    for (let j = 0; j < sample.length; j++) {
-      if (idxKey  === -1 && uuidRe.test(sample[j])) idxKey  = j;
-      if (idxTime === -1 && isoRe.test(sample[j]))  idxTime = j;
+  // STEP 1: Find the header row by scanning ALL rows for known tokens
+  const knownTokens = ['full_name','phone_number','gender','city','lead_status','lead_key','created_time'];
+  let headerRowIdx = -1;
+  let bestCount = 0;
+  for (let i = 0; i < rows.length; i++) {
+    let count = 0;
+    for (let j = 0; j < numCols; j++) {
+      if (knownTokens.includes(cellText(rows[i], j))) count++;
     }
-    window.__umino_debug.fallbackUsed = true;
-    window.__umino_debug.sampleRow = sample;
+    if (count > bestCount) { bestCount = count; headerRowIdx = i; }
   }
 
-  window.__umino_debug.indices = { idxKey, idxTime, idxName, idxPhone, idxRole, idxGender, idxCity };
+  // Also check the cols metadata as a candidate "header row" (when gviz auto-promotes row 1)
+  const metaCount = colsMeta.filter(c => knownTokens.includes((c.label || '').trim())).length;
+  let headersInMeta = false;
+  if (metaCount > bestCount) {
+    bestCount = metaCount;
+    headersInMeta = true;
+    headerRowIdx = -1;
+  }
+
+  // STEP 2: Build colNames map (column index → header name)
+  const colNames = new Array(numCols).fill('');
+  if (headersInMeta) {
+    for (let j = 0; j < colsMeta.length; j++) {
+      colNames[j] = (colsMeta[j].label || '').trim();
+    }
+  } else if (headerRowIdx >= 0) {
+    for (let j = 0; j < numCols; j++) {
+      colNames[j] = cellText(rows[headerRowIdx], j);
+    }
+  }
+
+  const colIdx = name => colNames.findIndex(c => c.toLowerCase() === name.toLowerCase());
+  const idxKey   = colIdx('lead_key');
+  const idxTime  = colIdx('created_time');
+  const idxName  = colIdx('full_name');
+  const idxPhone = colIdx('phone_number');
+  const idxRole  = colNames.findIndex(c => c && c.includes('תפקיד'));
+  const idxGender= colIdx('gender');
+  const idxCity  = colIdx('city');
+
+  window.__umino_debug = {
+    headersInMeta,
+    headerRowIdx,
+    headerMatchCount: bestCount,
+    totalRows: rows.length,
+    numCols,
+    colNames: colNames.slice(),
+    indices: { idxKey, idxTime, idxName, idxPhone, idxRole, idxGender, idxCity }
+  };
 
   if (idxKey === -1) {
-    throw new Error('עמודת lead_key לא נמצאה. הקש __umino_debug ב-Console לאבחון.');
+    throw new Error('עמודת lead_key לא נמצאה. ודא שה-Apps Script רץ.');
   }
 
-  const startIdx = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
-  const out = [];
-  for (let i = startIdx; i < rows.length; i++) {
-    const r = (rows[i] && rows[i].c) || [];
-    const get = idx => (idx >= 0 && r[idx] && r[idx].v != null) ? r[idx].v : '';
-    const lead_key = String(get(idxKey) || '').trim();
-    if (!lead_key || lead_key === 'lead_key') continue;
+  // STEP 3: Determine which rows are DATA rows.
+  // If headers are in meta → all rows are data.
+  // If headers are in a row → data rows are those ABOVE headerRowIdx (Facebook layout).
+  //   We also include rows BELOW (in case some legacy rows exist there) but it's optional.
+  const dataRowIndices = [];
+  if (headersInMeta) {
+    for (let i = 0; i < rows.length; i++) dataRowIndices.push(i);
+  } else {
+    // ABOVE headers — Facebook pushes new leads here
+    for (let i = 0; i < headerRowIdx; i++) dataRowIndices.push(i);
+    // BELOW headers — handle legacy rows or non-Facebook entries
+    for (let i = headerRowIdx + 1; i < rows.length; i++) dataRowIndices.push(i);
+  }
 
-    const lead = {
+  const out = [];
+  for (const i of dataRowIndices) {
+    const row = rows[i];
+    const get = idx => idx >= 0 ? cellText(row, idx) : '';
+    const lead_key = get(idxKey);
+    if (!lead_key) continue; // not enriched yet by Apps Script
+
+    out.push({
       lead_key,
-      created_time: String(get(idxTime) || ''),
-      full_name: String(get(idxName) || '').trim(),
-      phone: String(get(idxPhone) || '').trim(),
-      role: String(get(idxRole) || '').trim(),
-      gender: String(get(idxGender) || '').trim(),
-      city: String(get(idxCity) || '').trim()
-    };
-    if (out.length === 0) window.__umino_debug.firstDataRowSample = lead;
-    out.push(lead);
+      created_time: get(idxTime),
+      full_name: get(idxName),
+      phone: get(idxPhone),
+      role: get(idxRole),
+      gender: get(idxGender),
+      city: get(idxCity)
+    });
   }
 
   window.__umino_debug.leadsFound = out.length;
+  window.__umino_debug.firstLead = out[0] || null;
   return out;
 }
 
