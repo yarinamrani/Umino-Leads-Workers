@@ -85,18 +85,18 @@ const CFG = {
     table: 'lead_statuses_umino'  // SEPARATE FROM PASEO
   },
   handlers: ['גיל', 'בר'],
+  // Unified status list — each status maps to a dashboard bucket
   statuses: [
-    { v:'new',           label:'חדש' },
-    { v:'scheduled',     label:'נקבע ראיון' },
-    { v:'in_progress',   label:'בתהליך' },
-    { v:'not_relevant',  label:'לא רלוונטי' }
-  ],
-  subStatuses: {
-    new:          [{v:'',label:'—'}, {v:'message_sent',label:'נשלחה הודעה'}, {v:'no_answer',label:'אין מענה'}],
-    scheduled:    [{v:'',label:'—'}, {v:'confirmed',label:'אושר'}, {v:'cancelled',label:'בוטל'}],
-    in_progress:  [{v:'',label:'—'}, {v:'message_sent',label:'נשלחה הודעה'}, {v:'no_answer',label:'אין מענה'}, {v:'follow_up',label:'מעקב'}],
-    not_relevant: [{v:'',label:'—'}]
-  }
+    { v:'new',           label:'— (חדש)',        bucket:'new' },
+    { v:'message_sent',  label:'נשלחה הודעה',     bucket:'new' },
+    { v:'no_answer',     label:'אין מענה',        bucket:'new' },
+    { v:'scheduled',     label:'נקבע ראיון',      bucket:'scheduled' },
+    { v:'confirmed',     label:'אושר',            bucket:'scheduled' },
+    { v:'cancelled',     label:'בוטל',            bucket:'scheduled' },
+    { v:'in_progress',   label:'בתהליך',          bucket:'in_progress' },
+    { v:'follow_up',     label:'מעקב',            bucket:'in_progress' },
+    { v:'not_relevant',  label:'לא רלוונטי',      bucket:'not_relevant' }
+  ]
 };
 
 /* ============== STATE ============== */
@@ -273,9 +273,11 @@ function setSaving(el, txt, cls='') {
 /* ============== RENDER ============== */
 function bucket(lead) {
   const s = STATUSES[lead.lead_key];
-  if (!s) return 'new';                  // no record yet → new lead
+  if (!s) return 'new';
   if (s.hidden) return 'hidden';
-  return s.status || 'new';
+  if (!s.status) return 'new';
+  const def = CFG.statuses.find(x => x.v === s.status);
+  return def ? def.bucket : 'new';
 }
 
 function render() {
@@ -333,10 +335,9 @@ function render() {
 
 function cardHTML(lead) {
   const s = STATUSES[lead.lead_key] || {};
-  const subOpts = (CFG.subStatuses[s.status] || CFG.subStatuses.new)
-    .map(x => `<option value="${x.v}" ${s.sub_status===x.v?'selected':''}>${x.label}</option>`).join('');
+  const currentStatus = s.status || 'new';
   const statusOpts = CFG.statuses
-    .map(x => `<option value="${x.v}" ${(s.status||'new')===x.v?'selected':''}>${x.label}</option>`).join('');
+    .map(x => `<option value="${x.v}" ${currentStatus===x.v?'selected':''}>${x.label}</option>`).join('');
   const handlerOpts = ['<option value="">— מטפל —</option>']
     .concat(CFG.handlers.map(h => `<option value="${h}" ${s.handled_by===h?'selected':''}>${h}</option>`)).join('');
 
@@ -344,7 +345,9 @@ function cardHTML(lead) {
   const cityBadge = lead.city ? `<span class="pill">${escapeHtml(lead.city)}</span>` : '';
   const genderBadge = lead.gender ? `<span class="pill">${escapeHtml(lead.gender)}</span>` : '';
 
-  const showInterview = (s.status === 'scheduled');
+  // Show interview date/time fields only for scheduled-bucket statuses
+  const def = CFG.statuses.find(x => x.v === currentStatus);
+  const showInterview = def && def.bucket === 'scheduled';
   const interviewBlock = showInterview ? `
     <div class="interview-row">
       <input type="date" data-k="interview_date" value="${s.interview_date||''}">
@@ -366,7 +369,6 @@ function cardHTML(lead) {
       <div class="controls">
         <select data-k="handled_by">${handlerOpts}</select>
         <select data-k="status">${statusOpts}</select>
-        <select data-k="sub_status">${subOpts}</select>
         <span class="saving" data-saving></span>
       </div>
       ${interviewBlock}
@@ -385,8 +387,6 @@ function wireCard(lead) {
   card.querySelectorAll('select[data-k]').forEach(sel => {
     sel.addEventListener('change', () => {
       const patch = { [sel.dataset.k]: sel.value || null };
-      // If status changes, clear sub_status to avoid invalid combos
-      if (sel.dataset.k === 'status') patch.sub_status = null;
       saveStatus(lead.lead_key, patch, sav);
     });
   });
