@@ -7,9 +7,9 @@
 <title>אומינו — לידים</title>
 <style>
   :root{
-    --bg:#0e1116; --panel:#171b22; --panel2:#1f242d; --line:#2a313c;
-    --text:#e7ecf3; --muted:#8b95a4; --accent:#4f7cff;
-    --new:#3ea372; --sched:#d39a2e; --prog:#4f7cff; --hide:#7a8294;
+    --bg:#f5f6f8; --panel:#ffffff; --panel2:#f9fafb; --line:#e3e6eb;
+    --text:#1a1d23; --muted:#6b7280; --accent:#4f7cff;
+    --new:#3ea372; --sched:#d39a2e; --prog:#4f7cff; --hide:#9ca3af;
     --bad:#d05757;
   }
   *{box-sizing:border-box}
@@ -18,43 +18,43 @@
   header{padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--line);
     display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   header h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.2px}
-  header .badge{font-size:11px;background:#2a3042;color:#9ab0ff;
+  header .badge{font-size:11px;background:#dde7ff;color:#3656b8;
     padding:3px 8px;border-radius:999px}
   header .right{margin-inline-start:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  select,button,input{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+  select,button,input{background:var(--panel);color:var(--text);border:1px solid var(--line);
     border-radius:8px;padding:8px 10px;font-size:13px}
   button{cursor:pointer}
-  button:hover{border-color:#3a4252}
+  button:hover{border-color:#bcc2cc}
   .stat{font-size:12px;color:var(--muted)}
   main{padding:14px 18px;display:flex;flex-direction:column;gap:18px}
-  .section{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .section{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.04)}
   .sec-head{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;
     align-items:center;gap:10px;font-weight:600}
-  .sec-head .count{background:var(--panel2);padding:2px 8px;border-radius:999px;font-size:12px;color:var(--muted);font-weight:500}
+  .sec-head .count{background:#eef0f3;padding:2px 8px;border-radius:999px;font-size:12px;color:var(--muted);font-weight:500}
   .sec-head .dot{width:8px;height:8px;border-radius:50%}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
     gap:10px;padding:12px}
   .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
   .card .name{font-weight:600;font-size:15px}
   .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-  .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#262d39;color:var(--muted)}
-  .pill.role{background:#2c3a5a;color:#a8baf5}
-  .pill.time{background:#23282f}
+  .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef0f3;color:var(--muted)}
+  .pill.role{background:#dde7ff;color:#3656b8}
+  .pill.time{background:#eef0f3}
   .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
   .actions a, .actions button{font-size:12px;padding:6px 10px;border-radius:8px;text-decoration:none;
     border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
-  .actions a.wa{background:#1f3d2e;border-color:#28543f;color:#7ddca7}
-  .actions a.call{background:#1d2c44;border-color:#2a4368;color:#9bb6ec}
-  .actions button.hide{background:#2c2222;border-color:#553030;color:#e3a3a3}
+  .actions a.wa{background:#dcf5e6;border-color:#a3dcb9;color:#1f7d44}
+  .actions a.call{background:#dde9ff;border-color:#a8c0e8;color:#2451a3}
+  .actions button.hide{background:#fde8e8;border-color:#e8b4b4;color:#a83232}
   .controls{display:grid;grid-template-columns:1fr 1fr;gap:6px}
   .controls select{font-size:12px;padding:6px 8px}
   .empty{padding:18px 14px;color:var(--muted);font-size:13px;text-align:center}
-  .err{background:#3a1f1f;border:1px solid #6c2929;color:#ffb3b3;padding:10px 14px;border-radius:8px;font-size:13px;margin:14px 18px}
+  .err{background:#fde8e8;border:1px solid #e8b4b4;color:#a83232;padding:10px 14px;border-radius:8px;font-size:13px;margin:14px 18px}
   .interview-row{display:flex;gap:6px;align-items:center}
   .interview-row input{padding:6px 8px;font-size:12px;flex:1;min-width:0}
   .saving{font-size:11px;color:var(--muted)}
-  .saving.ok{color:#7ddca7}
-  .saving.bad{color:#e3a3a3}
+  .saving.ok{color:#1f7d44}
+  .saving.bad{color:#a83232}
   .loading{padding:24px;text-align:center;color:var(--muted)}
 </style>
 </head>
