@@ -1,5 +1,4 @@
 <!doctype html>
-
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
@@ -78,7 +77,7 @@
 /* ============== CONFIG — UMINO ONLY ============== */
 const CFG = {
   business: 'umino',
-  sheetId: '1NCl4qxe8gYKXA08cNxHoCyWvHyWXOUMUbffTUsFZVdo',
+  sheetId: '1qyjvaHgXpNhMzpA8nLHFyD5unGsjPEuAruWIJ-GyXoI',
   supabase: {
     url: 'https://vzeowbriddhvhpishmhn.supabase.co',
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6ZW93YnJpZGRodmhwaXNobWhuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MTAyNDUsImV4cCI6MjA4ODM4NjI0NX0.PWvjFj41l0wB9awroZdDsMhCJ0yJXdrf1-k-45n0Rwk',
@@ -246,9 +245,9 @@ function waLinkWithMessage(lead) {
   return `https://wa.me/${phone}?text=${msg}`;
 }
 
-/* ============== SHEETS LOAD (auto-discovers any layout) ============== */
+/* ============== SHEETS LOAD (clean new structure) ============== */
 async function loadSheets() {
-  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=0&t=${Date.now()}`;
+  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=1&t=${Date.now()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Sheets fetch failed: ${res.status}`);
   const text = await res.text();
@@ -256,99 +255,64 @@ async function loadSheets() {
   if (!m) throw new Error('Could not parse gviz response');
   const json = JSON.parse(m[1]);
 
+  const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
-  const numCols = Math.max(0, ...rows.map(r => (r.c || []).length));
 
-  const cellText = (rowIdx, colIdx) => {
-    const c = rows[rowIdx] && rows[rowIdx].c && rows[rowIdx].c[colIdx];
+  // Build column-name → index map from gviz cols metadata (since headers are in row 1)
+  const colIdx = {};
+  colsMeta.forEach((c, i) => {
+    const label = (c.label || '').trim();
+    if (label) colIdx[label] = i;
+  });
+
+  // Find role column (Hebrew "תפקיד")
+  let roleIdx = -1;
+  for (const [name, idx] of Object.entries(colIdx)) {
+    if (name.includes('תפקיד')) { roleIdx = idx; break; }
+  }
+
+  const cellText = (row, j) => {
+    const c = row && row.c && row.c[j];
     return (c && c.v != null) ? String(c.v).trim() : '';
   };
 
-  // STEP 1: For each known field name, find ALL columns where that exact text appears
-  // anywhere as a cell value. We'll resolve duplicates next.
-  const findColumnsContaining = (target) => {
-    const cols = [];
-    for (let j = 0; j < numCols; j++) {
-      for (let i = 0; i < rows.length; i++) {
-        if (cellText(i, j) === target) { cols.push(j); break; }
-      }
-    }
-    return cols;
-  };
-
-  const candidates = {
-    lead_key:     findColumnsContaining('lead_key'),
-    created_time: findColumnsContaining('created_time'),
-    full_name:    findColumnsContaining('full_name'),
-    phone_number: findColumnsContaining('phone_number'),
-    gender:       findColumnsContaining('gender'),
-    city:         findColumnsContaining('city')
-  };
-
-  // Role column: header label contains 'תפקיד' (Hebrew)
-  let roleCandidates = [];
-  for (let j = 0; j < numCols; j++) {
-    for (let i = 0; i < rows.length; i++) {
-      if (cellText(i, j).includes('תפקיד')) { roleCandidates.push(j); break; }
-    }
-  }
-
-  // STEP 2: For lead_key column, pick the one that has UUIDs below the header.
-  // (Multiple "lead_key" headers can exist, but only one will have real UUIDs as data.)
-  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const isoRe  = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
-
-  const pickColumnWithPattern = (cols, regex) => {
-    for (const j of cols) {
-      for (let i = 0; i < rows.length; i++) {
-        if (regex.test(cellText(i, j))) return j;
-      }
-    }
-    return cols[0]; // fallback to first if no pattern match
-  };
-
-  const idxKey   = pickColumnWithPattern(candidates.lead_key, uuidRe);
-  const idxTime  = pickColumnWithPattern(candidates.created_time, isoRe);
-
-  // STEP 3: For other fields with multiple candidates, pick the column closest to lead_key
-  // (most likely to be in the same data block).
-  const closestTo = (target, cols) => {
-    if (cols.length === 0) return -1;
-    if (cols.length === 1) return cols[0];
-    return cols.reduce((best, c) =>
-      Math.abs(c - target) < Math.abs(best - target) ? c : best);
-  };
-
-  const idxName   = closestTo(idxKey, candidates.full_name);
-  const idxPhone  = closestTo(idxKey, candidates.phone_number);
-  const idxGender = closestTo(idxKey, candidates.gender);
-  const idxCity   = closestTo(idxKey, candidates.city);
-  const idxRole   = closestTo(idxKey, roleCandidates);
+  const idxId    = colIdx['id'] !== undefined ? colIdx['id'] : -1;
+  const idxTime  = colIdx['created_time'] !== undefined ? colIdx['created_time'] : -1;
+  const idxName  = colIdx['full_name'] !== undefined ? colIdx['full_name'] : -1;
+  const idxPhone = colIdx['phone_number'] !== undefined ? colIdx['phone_number'] : -1;
+  const idxGender= colIdx['gender'] !== undefined ? colIdx['gender'] : -1;
+  const idxCity  = colIdx['city'] !== undefined ? colIdx['city'] : -1;
 
   window.__umino_debug = {
-    numCols, totalRows: rows.length,
-    candidates, roleCandidates,
-    indices: { idxKey, idxTime, idxName, idxPhone, idxGender, idxCity, idxRole }
+    totalRows: rows.length,
+    colsFound: Object.keys(colIdx),
+    indices: { idxId, idxTime, idxName, idxPhone, idxGender, idxCity, roleIdx }
   };
 
-  if (idxKey === -1 || idxKey === undefined) {
-    throw new Error('עמודת lead_key לא נמצאה. ודא שה-Apps Script רץ.');
+  if (idxId === -1) {
+    throw new Error('עמודת id לא נמצאה. ודא שהקובץ public ושיש שורת headers.');
   }
 
-  // STEP 4: Read every row that has a UUID in the lead_key column
   const out = [];
   for (let i = 0; i < rows.length; i++) {
-    const lead_key = cellText(i, idxKey);
-    if (!uuidRe.test(lead_key)) continue; // only rows with valid UUID
+    const row = rows[i];
+    const id = cellText(row, idxId);
+    if (!id) continue;
+    // Strip "l:" prefix from Facebook lead IDs to make a clean key
+    const lead_key = id.replace(/^l:/, '');
+
+    // Strip "p:" prefix from phone numbers
+    const rawPhone = cellText(row, idxPhone);
+    const phone = rawPhone.replace(/^p:/, '');
 
     out.push({
       lead_key,
-      created_time: cellText(i, idxTime),
-      full_name:    cellText(i, idxName),
-      phone:        cellText(i, idxPhone),
-      role:         cellText(i, idxRole),
-      gender:       cellText(i, idxGender),
-      city:         cellText(i, idxCity)
+      created_time: cellText(row, idxTime),
+      full_name: cellText(row, idxName),
+      phone,
+      role: roleIdx >= 0 ? cellText(row, roleIdx) : '',
+      gender: cellText(row, idxGender),
+      city: cellText(row, idxCity)
     });
   }
 
@@ -582,6 +546,5 @@ boot();
 // Auto-refresh every 60s
 setInterval(boot, 60000);
 </script>
-
 </body>
 </html>
