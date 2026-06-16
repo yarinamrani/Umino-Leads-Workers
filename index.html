@@ -66,6 +66,9 @@
     <select id="roleFilter" title="תפקיד">
       <option value="">כל התפקידים</option>
     </select>
+    <label class="stat" style="display:flex;align-items:center;gap:4px">מתאריך
+      <input type="date" id="fromDate" title="הצג לידים מתאריך זה והלאה">
+    </label>
     <button id="refreshBtn">רענן</button>
   </div>
 </header>
@@ -77,6 +80,9 @@
 /* ============== CONFIG — UMINO ONLY ============== */
 const CFG = {
   business: 'umino',
+  // Default earliest lead date to display. Leads created before this are hidden
+  // so previously-handled old leads don't keep re-appearing. Adjustable in the UI.
+  defaultFromDate: '2026-06-01',
   sheetId: '1qyjvaHgXpNhMzpA8nLHFyD5unGsjPEuAruWIJ-GyXoI',
   supabase: {
     url: 'https://vzeowbriddhvhpishmhn.supabase.co',
@@ -102,6 +108,8 @@ const CFG = {
 let LEADS = [];        // raw merged leads
 let STATUSES = {};     // lead_key -> supabase row
 let ROLE_FILTER = '';
+// Earliest created_time to show. Persisted in localStorage; defaults to CFG.defaultFromDate.
+let FROM_DATE = (localStorage.getItem('umino_from_date') || CFG.defaultFromDate);
 
 /* ============== HELPERS ============== */
 const $ = sel => document.querySelector(sel);
@@ -124,6 +132,17 @@ function relativeHe(iso) {
   const day = Math.floor(hr/24);
   if (day < 7) return `לפני ${day} ימים`;
   return d.toLocaleDateString('he-IL');
+}
+
+// True if the lead was created on/after the FROM_DATE cutoff.
+// Unparseable dates are kept (shown) to avoid accidentally hiding valid leads.
+function passesDateFilter(lead) {
+  if (!FROM_DATE) return true;
+  const created = new Date(lead.created_time);
+  if (isNaN(created)) return true;
+  const cutoff = new Date(FROM_DATE + 'T00:00:00');
+  if (isNaN(cutoff)) return true;
+  return created.getTime() >= cutoff.getTime();
 }
 
 function normalizePhone(p) {
@@ -404,8 +423,9 @@ function render() {
     roles.map(r => `<option value="${r}">${r}</option>`).join('');
   sel.value = cur || ROLE_FILTER || '';
 
-  // Filter
-  const filtered = LEADS.filter(l => !ROLE_FILTER || l.role === ROLE_FILTER);
+  // Filter by role and by date cutoff
+  const filtered = LEADS.filter(l =>
+    (!ROLE_FILTER || l.role === ROLE_FILTER) && passesDateFilter(l));
 
   // Bucket
   const buckets = { new:[], scheduled:[], in_progress:[], not_relevant:[], hidden:[] };
@@ -539,6 +559,13 @@ async function boot() {
 $('#refreshBtn').addEventListener('click', boot);
 $('#roleFilter').addEventListener('change', e => {
   ROLE_FILTER = e.target.value;
+  render();
+});
+$('#fromDate').value = FROM_DATE;
+$('#fromDate').addEventListener('change', e => {
+  FROM_DATE = e.target.value;
+  if (FROM_DATE) localStorage.setItem('umino_from_date', FROM_DATE);
+  else localStorage.removeItem('umino_from_date');
   render();
 });
 
