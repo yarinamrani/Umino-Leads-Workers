@@ -260,7 +260,8 @@ function waLinkWithMessage(lead) {
 
 /* ============== SHEETS LOAD (multi-tab support) ============== */
 async function loadOneSheet(source) {
-  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(source.name)}&t=${Date.now()}`;
+  // headers=0 → do NOT auto-promote first row to header; we detect it ourselves
+  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=0&sheet=${encodeURIComponent(source.name)}&t=${Date.now()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Sheets fetch failed for ${source.name}: ${res.status}`);
   const text = await res.text();
@@ -270,12 +271,40 @@ async function loadOneSheet(source) {
 
   const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
+  const numCols = Math.max(colsMeta.length, ...rows.map(r => (r.c || []).length));
 
+  const cellText = (row, j) => {
+    const c = row && row.c && row.c[j];
+    return (c && c.v != null) ? String(c.v).trim() : '';
+  };
+
+  // KNOWN header tokens. Find the row that contains the MOST of these tokens.
+  const KNOWN = ['id', 'created_time', 'full_name', 'phone_number', 'gender', 'city', 'lead_status', 'ad_name', 'form_name', 'platform'];
+  let headerRow = -1;
+  let bestScore = 0;
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const row = rows[i];
+    let score = 0;
+    for (let j = 0; j < numCols; j++) {
+      if (KNOWN.includes(cellText(row, j))) score++;
+    }
+    if (score > bestScore) { bestScore = score; headerRow = i; }
+  }
+
+  // Fallback: use colsMeta labels if in-row scan failed
   const colIdx = {};
-  colsMeta.forEach((c, i) => {
-    const label = (c.label || '').trim();
-    if (label) colIdx[label] = i;
-  });
+  if (headerRow >= 0 && bestScore >= 3) {
+    const row = rows[headerRow];
+    for (let j = 0; j < numCols; j++) {
+      const label = cellText(row, j);
+      if (label) colIdx[label] = j;
+    }
+  } else {
+    colsMeta.forEach((c, i) => {
+      const label = (c.label || '').trim();
+      if (label) colIdx[label] = i;
+    });
+  }
 
   // Detect role column and experience column by header substring
   let roleIdx = -1, expIdx = -1;
@@ -283,11 +312,6 @@ async function loadOneSheet(source) {
     if (roleIdx === -1 && name.includes('תפקיד')) roleIdx = idx;
     if (expIdx === -1 && name.includes('ניסיון')) expIdx = idx;
   }
-
-  const cellText = (row, j) => {
-    const c = row && row.c && row.c[j];
-    return (c && c.v != null) ? String(c.v).trim() : '';
-  };
 
   const idxId    = colIdx['id']            !== undefined ? colIdx['id']            : -1;
   const idxTime  = colIdx['created_time']  !== undefined ? colIdx['created_time']  : -1;
@@ -300,11 +324,17 @@ async function loadOneSheet(source) {
     throw new Error(`עמודת id לא נמצאה ב-${source.label}`);
   }
 
+  // Data rows are everything EXCEPT the header row
+  const dataStart = headerRow >= 0 ? headerRow + 1 : 0;
   const out = [];
   for (let i = 0; i < rows.length; i++) {
+    if (i === headerRow) continue;  // skip the actual header row
+    if (i < dataStart) continue;    // skip rows above headers (unlikely but safe)
     const row = rows[i];
     const id = cellText(row, idxId);
     if (!id) continue;
+    if (id === 'id') continue;  // extra safety: skip if this row IS a header
+
     // Skip test leads
     const name = cellText(row, idxName);
     if (name.startsWith('<test lead')) continue;
@@ -322,7 +352,8 @@ async function loadOneSheet(source) {
       gender: cellText(row, idxGender),
       city: cellText(row, idxCity),
       experience: expIdx >= 0 ? cellText(row, expIdx) : '',
-      source: source.label
+      source: source.label,
+      _debug: { headerRow, bestScore, idxName, idxId, expIdx }
     });
   }
   return out;
