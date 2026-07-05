@@ -343,6 +343,12 @@ async function loadOneSheet(source) {
     const rawPhone = cellText(row, idxPhone);
     const phone = rawPhone.replace(/^p:/, '');
 
+    // Guard against misaligned rows (e.g. cook leads pasted into the waiters tab
+    // with shifted columns → name lands in the phone column). A real lead must
+    // have a phone-looking value here. The correct copy exists in the cooks tab.
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 8) continue;
+
     out.push({
       lead_key,
       created_time: cellText(row, idxTime),
