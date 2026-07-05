@@ -39,6 +39,8 @@
   .pill{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef0f3;color:var(--muted)}
   .pill.role{background:#dde7ff;color:#3656b8}
   .pill.time{background:#eef0f3}
+  .pill.exp{background:#fef3d0;color:#8a6a1a}
+  .pill.source{background:#e6f4ea;color:#1f6a3a}
   .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
   .actions a, .actions button{font-size:12px;padding:6px 10px;border-radius:8px;text-decoration:none;
     border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
@@ -63,6 +65,9 @@
   <span class="badge">UMINO</span>
   <div class="right">
     <span class="stat" id="stat">טוען…</span>
+    <select id="sourceFilter" title="סוג">
+      <option value="">כל הסוגים</option>
+    </select>
     <select id="roleFilter" title="תפקיד">
       <option value="">כל התפקידים</option>
     </select>
@@ -78,6 +83,12 @@
 const CFG = {
   business: 'umino',
   sheetId: '1_pSR6eiQ_pPbryKkB5G5jVcnVhmFwN0qyPFkj6XrWww',
+  // Each sub-sheet in the workbook. name = tab name in Google Sheets.
+  // hasExperience: true → this sheet has the "years of experience" column.
+  sources: [
+    { name: 'מלצרים',       label: 'מלצרים',   hasExperience: false },
+    { name: 'דרושים טבחים', label: 'טבחים',    hasExperience: true  }
+  ],
   supabase: {
     url: 'https://vzeowbriddhvhpishmhn.supabase.co',
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6ZW93YnJpZGRodmhwaXNobWhuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI4MTAyNDUsImV4cCI6MjA4ODM4NjI0NX0.PWvjFj41l0wB9awroZdDsMhCJ0yJXdrf1-k-45n0Rwk',
@@ -102,6 +113,7 @@ const CFG = {
 let LEADS = [];        // raw merged leads
 let STATUSES = {};     // lead_key -> supabase row
 let ROLE_FILTER = '';
+let SOURCE_FILTER = ''; // '' = all, or a source label
 
 /* ============== HELPERS ============== */
 const $ = sel => document.querySelector(sel);
@@ -233,7 +245,8 @@ function buildWhatsAppMessage(lead) {
   const fullName = lead.full_name || '';
   const firstName = fullName.split(/\s+/)[0] || '';
   const name = transliterateToHebrew(firstName) || firstName;
-  const phrase = rolePhrase(lead.role);
+  // Cooks always get "מטבח" phrase, otherwise infer from role field
+  const phrase = (lead.source === 'טבחים') ? 'מטבח' : rolePhrase(lead.role);
   const roleClause = phrase ? `בנוגע למשרת ${phrase} ` : '';
   return `היי ${name} מה שלומך? ראיתי שהשארת פרטים ${roleClause}באומינו סושי.`;
 }
@@ -245,30 +258,30 @@ function waLinkWithMessage(lead) {
   return `https://wa.me/${phone}?text=${msg}`;
 }
 
-/* ============== SHEETS LOAD (clean new structure) ============== */
-async function loadSheets() {
-  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=1&t=${Date.now()}`;
+/* ============== SHEETS LOAD (multi-tab support) ============== */
+async function loadOneSheet(source) {
+  const url = `https://docs.google.com/spreadsheets/d/${CFG.sheetId}/gviz/tq?tqx=out:json&headers=1&sheet=${encodeURIComponent(source.name)}&t=${Date.now()}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Sheets fetch failed: ${res.status}`);
+  if (!res.ok) throw new Error(`Sheets fetch failed for ${source.name}: ${res.status}`);
   const text = await res.text();
   const m = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/);
-  if (!m) throw new Error('Could not parse gviz response');
+  if (!m) throw new Error(`Could not parse gviz for ${source.name}`);
   const json = JSON.parse(m[1]);
 
   const colsMeta = json.table.cols || [];
   const rows = json.table.rows || [];
 
-  // Build column-name → index map from gviz cols metadata (since headers are in row 1)
   const colIdx = {};
   colsMeta.forEach((c, i) => {
     const label = (c.label || '').trim();
     if (label) colIdx[label] = i;
   });
 
-  // Find role column (Hebrew "תפקיד")
-  let roleIdx = -1;
+  // Detect role column and experience column by header substring
+  let roleIdx = -1, expIdx = -1;
   for (const [name, idx] of Object.entries(colIdx)) {
-    if (name.includes('תפקיד')) { roleIdx = idx; break; }
+    if (roleIdx === -1 && name.includes('תפקיד')) roleIdx = idx;
+    if (expIdx === -1 && name.includes('ניסיון')) expIdx = idx;
   }
 
   const cellText = (row, j) => {
@@ -276,21 +289,15 @@ async function loadSheets() {
     return (c && c.v != null) ? String(c.v).trim() : '';
   };
 
-  const idxId    = colIdx['id'] !== undefined ? colIdx['id'] : -1;
-  const idxTime  = colIdx['created_time'] !== undefined ? colIdx['created_time'] : -1;
-  const idxName  = colIdx['full_name'] !== undefined ? colIdx['full_name'] : -1;
-  const idxPhone = colIdx['phone_number'] !== undefined ? colIdx['phone_number'] : -1;
-  const idxGender= colIdx['gender'] !== undefined ? colIdx['gender'] : -1;
-  const idxCity  = colIdx['city'] !== undefined ? colIdx['city'] : -1;
-
-  window.__umino_debug = {
-    totalRows: rows.length,
-    colsFound: Object.keys(colIdx),
-    indices: { idxId, idxTime, idxName, idxPhone, idxGender, idxCity, roleIdx }
-  };
+  const idxId    = colIdx['id']            !== undefined ? colIdx['id']            : -1;
+  const idxTime  = colIdx['created_time']  !== undefined ? colIdx['created_time']  : -1;
+  const idxName  = colIdx['full_name']     !== undefined ? colIdx['full_name']     : -1;
+  const idxPhone = colIdx['phone_number']  !== undefined ? colIdx['phone_number']  : -1;
+  const idxGender= colIdx['gender']        !== undefined ? colIdx['gender']        : -1;
+  const idxCity  = colIdx['city']          !== undefined ? colIdx['city']          : -1;
 
   if (idxId === -1) {
-    throw new Error('עמודת id לא נמצאה. ודא שהקובץ public ושיש שורת headers.');
+    throw new Error(`עמודת id לא נמצאה ב-${source.label}`);
   }
 
   const out = [];
@@ -298,27 +305,56 @@ async function loadSheets() {
     const row = rows[i];
     const id = cellText(row, idxId);
     if (!id) continue;
-    // Strip "l:" prefix from Facebook lead IDs to make a clean key
-    const lead_key = id.replace(/^l:/, '');
+    // Skip test leads
+    const name = cellText(row, idxName);
+    if (name.startsWith('<test lead')) continue;
 
-    // Strip "p:" prefix from phone numbers
+    const lead_key = id.replace(/^l:/, '');
     const rawPhone = cellText(row, idxPhone);
     const phone = rawPhone.replace(/^p:/, '');
 
     out.push({
       lead_key,
       created_time: cellText(row, idxTime),
-      full_name: cellText(row, idxName),
+      full_name: name,
       phone,
-      role: roleIdx >= 0 ? cellText(row, roleIdx) : '',
+      role: roleIdx >= 0 ? cellText(row, roleIdx) : (source.hasExperience ? 'מטבח' : ''),
       gender: cellText(row, idxGender),
-      city: cellText(row, idxCity)
+      city: cellText(row, idxCity),
+      experience: expIdx >= 0 ? cellText(row, expIdx) : '',
+      source: source.label
     });
   }
-
-  window.__umino_debug.leadsFound = out.length;
-  window.__umino_debug.firstLead = out[0] || null;
   return out;
+}
+
+async function loadSheets() {
+  const results = await Promise.allSettled(CFG.sources.map(loadOneSheet));
+  const all = [];
+  const errors = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') all.push(...r.value);
+    else errors.push(`${CFG.sources[i].label}: ${r.reason.message}`);
+  });
+  window.__umino_debug = {
+    totalLeads: all.length,
+    perSource: CFG.sources.map((s, i) => ({
+      label: s.label,
+      count: results[i].status === 'fulfilled' ? results[i].value.length : 0,
+      error: results[i].status === 'rejected' ? results[i].reason.message : null
+    })),
+    errors
+  };
+  if (all.length === 0 && errors.length > 0) {
+    throw new Error(errors.join(' | '));
+  }
+  // Deduplicate by lead_key (in case same lead is in both sheets)
+  const seen = new Set();
+  return all.filter(l => {
+    if (seen.has(l.lead_key)) return false;
+    seen.add(l.lead_key);
+    return true;
+  });
 }
 
 /* ============== SUPABASE ============== */
@@ -396,16 +432,28 @@ function bucket(lead) {
 }
 
 function render() {
-  // Role filter dropdown population
-  const roles = [...new Set(LEADS.map(l => l.role).filter(Boolean))].sort();
+  // Source filter dropdown population
+  const sources = [...new Set(LEADS.map(l => l.source).filter(Boolean))].sort();
+  const srcSel = $('#sourceFilter');
+  const curSrc = srcSel.value;
+  srcSel.innerHTML = `<option value="">כל הסוגים</option>` +
+    sources.map(s => `<option value="${s}">${s}</option>`).join('');
+  srcSel.value = curSrc || SOURCE_FILTER || '';
+
+  // Role filter dropdown population (only roles from currently-visible source)
+  const roleSource = SOURCE_FILTER ? LEADS.filter(l => l.source === SOURCE_FILTER) : LEADS;
+  const roles = [...new Set(roleSource.map(l => l.role).filter(Boolean))].sort();
   const sel = $('#roleFilter');
   const cur = sel.value;
   sel.innerHTML = `<option value="">כל התפקידים</option>` +
     roles.map(r => `<option value="${r}">${r}</option>`).join('');
   sel.value = cur || ROLE_FILTER || '';
 
-  // Filter
-  const filtered = LEADS.filter(l => !ROLE_FILTER || l.role === ROLE_FILTER);
+  // Filter (both source and role)
+  const filtered = LEADS.filter(l =>
+    (!SOURCE_FILTER || l.source === SOURCE_FILTER) &&
+    (!ROLE_FILTER   || l.role   === ROLE_FILTER)
+  );
 
   // Bucket
   const buckets = { new:[], scheduled:[], in_progress:[], not_relevant:[], hidden:[] };
@@ -459,6 +507,8 @@ function cardHTML(lead) {
   const roleBadge = lead.role ? `<span class="pill role">${escapeHtml(lead.role)}</span>` : '';
   const cityBadge = lead.city ? `<span class="pill">${escapeHtml(lead.city)}</span>` : '';
   const genderBadge = lead.gender ? `<span class="pill">${escapeHtml(lead.gender)}</span>` : '';
+  const expBadge = lead.experience ? `<span class="pill exp">ניסיון: ${escapeHtml(lead.experience)}</span>` : '';
+  const sourceBadge = lead.source ? `<span class="pill source">${escapeHtml(lead.source)}</span>` : '';
 
   // Show interview date/time fields only for scheduled-bucket statuses
   const def = CFG.statuses.find(x => x.v === currentStatus);
@@ -474,7 +524,7 @@ function cardHTML(lead) {
       <div class="name">${escapeHtml(lead.full_name) || '—'}</div>
       <div class="row">
         <span class="pill time">${relativeHe(lead.created_time)}</span>
-        ${roleBadge}${cityBadge}${genderBadge}
+        ${sourceBadge}${roleBadge}${expBadge}${cityBadge}${genderBadge}
       </div>
       <div class="actions">
         <a class="wa" href="${waLinkWithMessage(lead)}" target="_blank">WhatsApp</a>
@@ -539,6 +589,10 @@ async function boot() {
 $('#refreshBtn').addEventListener('click', boot);
 $('#roleFilter').addEventListener('change', e => {
   ROLE_FILTER = e.target.value;
+  render();
+});
+$('#sourceFilter').addEventListener('change', e => {
+  SOURCE_FILTER = e.target.value;
   render();
 });
 
