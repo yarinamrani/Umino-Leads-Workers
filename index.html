@@ -253,8 +253,8 @@ function buildWhatsAppMessage(lead) {
   const name = transliterateToHebrew(firstName) || firstName;
   // Cooks always get "מטבח" phrase, otherwise infer from role field
   const phrase = (lead.source === 'טבחים') ? 'מטבח' : rolePhrase(lead.role);
-    const roleClause = phrase ? `במשרת ${phrase} ` : 'במשרה ';
-  return `היי מה קורה? ${name} ראיתי שהתעניינת ${roleClause}אצלנו במסעדה\n` +
+      const roleClause = phrase ? `במשרה ${phrase} ` : 'במשרה ';
+  return `היי מה קורה ${name}? ראיתי שהתעניינת ${roleClause}אצלנו במסעדה\n` +
     `רציתי לשאול האם ראשון לציון זה טוב עבורך?\n` +
     `ומה הגיל שלך והאם יש ניסיון קודם?`;
 }
